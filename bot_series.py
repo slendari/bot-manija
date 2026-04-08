@@ -38,13 +38,23 @@ def hoy_local():
 
 # --- COMANDOS ---
 
-async def start(update, context):
+from telegram import ReplyKeyboardMarkup
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Definimos los botones que queremos que aparezcan
+    # Cada lista interna es una "fila" de botones
+    botones = [
+        ['🔍 /ver', '✅ /seguir'],
+        ['🗑️ /borrar', '🔔 /revisar']
+    ]
+    
+    # Creamos el teclado. 
+    # resize_keyboard=True es para que no ocupen media pantalla.
+    teclado = ReplyKeyboardMarkup(botones, resize_keyboard=True)
+    
     await update.message.reply_text(
-        "¡Qué hacés! Soy el gordo Manija TV. Mis comandos:\n"
-        "🔍 /ver [Serie] - Info del próximo estreno.\n"
-        "✅ /seguir [Serie] - Guardar serie en tu lista.\n"
-        "🗑️ /borrar [Serie] - Dejar de seguir una serie.\n"
-        "🔔 /revisar - Ver si hoy se estrena algo de tu lista."
+        "¡Qué hacés! Acá el gordo Manija TV. Tocá alguno de los botones para consultar novedades de tus series favoritas:",
+        reply_markup=teclado
     )
 
 async def ver(update, context):

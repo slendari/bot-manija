@@ -11,7 +11,7 @@ from pymongo import MongoClient
 # --- CONFIGURACIÓN ---
 TOKEN_TELEGRAM = '8750533607:AAFsxyeQfVo_ca_ehJ8T2zeJ92u9wPhSkAA'
 API_KEY_TMDB = '32f474f4af44c8db3dce402ff78408d7'
-MONGO_URI = 'TU_LINK_DE_MONGODB' # <--- PEGA TU LINK ACÁ
+MONGO_URI = 'mongodb+srv://slendari:<*4r1_Y3d*>@cluster0.k8m8vid.mongodb.net/?appName=Cluster0' # <--- PEGA TU LINK ACÁ
 
 # Conexión a MongoDB
 client = MongoClient(MONGO_URI)

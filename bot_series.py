@@ -44,12 +44,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "¡Qué hacés bebé! Acá El Manija TV. \n\n"
+        "¡Qué hacés bebé! Acá El ManijaTV 🍿. \n\n"
         "Con los siguientes comandos podés averiguar novedades de tus series favoritas:\n"
-        "🔍 /ver [nombre] - Info del próximo estreno.\n"
-        "✅ /seguir [nombre] - Guardar serie en tu lista.\n"
-        "🗑️ /borrar [nombre] - Dejar de seguir una serie.\n"
-        "🔔 /revisar - Ver si hoy se estrena algo de tu lista."
+        "/ver [nombre] - Info del próximo estreno 🔍.\n"
+        "/seguir [nombre] - Guardar serie en tu lista ✅.\n"
+        "/borrar [nombre] - Dejar de seguir una serie 🗑️.\n"
+        "/revisar - Ver si hoy se estrena algo de tu lista 🔔."
     )
     
     reply_markup = InlineKeyboardMarkup(keyboard)

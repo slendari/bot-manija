@@ -116,6 +116,10 @@ async def ver(update, context):
 async def seguir(update, context):
     try:
         nombre = " ".join(context.args)
+        if not nombre:
+            await update.message.reply_text("Decime qué serie seguir.")
+            return
+            
         serie = buscar_en_tmdb(nombre)
         if serie:
             u_id = str(update.effective_user.id)
@@ -125,13 +129,13 @@ async def seguir(update, context):
             if serie['id'] not in [s['id'] for s in series_lista]:
                 series_lista.append({'id': serie['id'], 'name': serie['name']})
                 coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
-                await update.message.reply_text(f"✅ Agregada a tu lista: {serie['name']}")
+                await update.message.reply_text(f"Siguiendo {serie['name']} ✅.")
             else:
                 await update.message.reply_text(f"Ya seguís a {serie['name']}.")
         else:
-            await update.message.reply_text("No la encontré.")
+            await update.message.reply_text("No encontré esa serie.")
     except Exception as e:
-        await update.message.reply_text("Error con la base de datos. Avisame y revisamos el link de Mongo.")
+        await update.message.reply_text("Error con la base de datos.")
 
 async def borrar(update, context):
     nombre = " ".join(context.args).lower()

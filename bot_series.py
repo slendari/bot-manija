@@ -153,8 +153,10 @@ async def revisar_estrenos(update, context):
     try:
         u_id = str(update.effective_user.id)
         user_data = coleccion.find_one({"user_id": u_id})
-        if not user_data or not user_data['series']:
-            await update.message.reply_text("No seguís ninguna serie todavía.")
+        
+        # Si no hay datos del usuario o la lista de series está vacía
+        if not user_data or not user_data.get('series'):
+            await update.message.reply_text("No seguís ninguna serie.")
             return
 
         hoy = hoy_local()
@@ -167,11 +169,10 @@ async def revisar_estrenos(update, context):
             if prox and prox['air_date'] == hoy:
                 encontrado = True
                 num_temp = prox['season_number']
-                
                 temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                
                 poster = temp_data.get('poster_path') or det.get('poster_path')
                 img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
-                
                 caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
                 
                 if len(caps_hoy) > 1:
@@ -183,7 +184,9 @@ async def revisar_estrenos(update, context):
                 if img_url: await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
                 else: await update.message.reply_text(msg, parse_mode='Markdown')
                 
-        if not encontrado: await update.message.reply_text("Hoy no hay estrenos de tus series. A dormir.")
+        if not encontrado:
+            await update.message.reply_text("❌ Hoy no hay estrenos de tus series.")
+            
     except Exception as e:
         await update.message.reply_text("Error consultando la base de datos.")
 

@@ -39,7 +39,7 @@ def formatear_fecha(fecha_str):
 
 async def start(update, context):
     await update.message.reply_text(
-        "¡Qué hacés Ari! Soy El Manija TV. Mis comandos:\n"
+        "¡Qué hacés! Acá el gordo Manija TV. Mis comandos:\n"
         "🔍 /ver [nombre] - Info del próximo estreno.\n"
         "✅ /seguir [nombre] - Guardar serie en tu lista.\n"
         "🗑️ /borrar [nombre] - Dejar de seguir una serie.\n"

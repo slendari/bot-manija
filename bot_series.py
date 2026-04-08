@@ -3,7 +3,8 @@ import os
 import threading
 import http.server
 import socketserver
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
+import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from pymongo import MongoClient
@@ -11,7 +12,7 @@ from pymongo import MongoClient
 # --- CONFIGURACIÓN ---
 TOKEN_TELEGRAM = '8750533607:AAFsxyeQfVo_ca_ehJ8T2zeJ92u9wPhSkAA'
 API_KEY_TMDB = '32f474f4af44c8db3dce402ff78408d7'
-MONGO_URI = 'mongodb+srv://slendari:*4r1_Y3d*@cluster0.k8m8vid.mongodb.net/?appName=Cluster0' # <- ACORDATE DE SACAR LOS < >
+MONGO_URI = 'mongodb+srv://slendari:*4r1_Y3d*@cluster0.k8m8vid.mongodb.net/?appName=Cluster0'
 
 client = MongoClient(MONGO_URI)
 db = client['el_manija_db']
@@ -33,14 +34,27 @@ def formatear_fecha(fecha_str):
     return f"{int(d)} de {meses[m]}, {y}"
 
 def hoy_local():
-    # Ajuste UTC+3 para sincronizar el "hoy" exacto de tu zona horaria
-    return (datetime.utcnow() + timedelta(hours=3)).strftime("%Y-%m-%d")
+    # Sincronizado exacto con tu zona horaria
+    tz = pytz.timezone('Asia/Jerusalem')
+    return datetime.now(tz).strftime("%Y-%m-%d")
+
+# --- FUNCIÓN DE AVISO AUTOMÁTICO ---
+async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
+    hoy = hoy_local()
+    usuarios = coleccion.find()
+    
+    for user_data in usuarios:
+        u_id = user_data['user_id']
+        for s in user_data.get('series', []):
+            det = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+            prox = det.get('next_episode_to_air')
+            
+            if prox and prox['air_date'] == hoy:
+                num_temp = prox['season_number']
+                msg = f"🚨 **¡AVISO AUTOMÁTICO!** 🚨\n\n📺 **{s['name']}** estrena el capítulo {prox['episode_number']} de la temporada {num_temp} HOY."
+                await context.bot.send_message(chat_id=u_id, text=msg, parse_mode='Markdown')
 
 # --- COMANDOS ---
-
-from telegram import ReplyKeyboardMarkup
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -51,13 +65,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/borrar [serie] - Dejar de seguir una serie.\n"
         "/revisar - Ver si hoy se estrena algo de tu lista.\n"
         "/lista - Ver todas las series que seguís."
-    )
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "¡Qué hacés! Tocá un botón para completar el comando y escribí el nombre de la serie al lado:",
-        reply_markup=reply_markup
     )
 
 async def ver(update, context):
@@ -76,15 +83,12 @@ async def ver(update, context):
         hoy = hoy_local()
         num_temp = prox['season_number']
         
-        # Buscar capítulos de la temporada para ver si hay más hoy o a futuro
         temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
         episodes = temp_data.get('episodes', [])
         
-        # Filtrar caps de hoy y futuros
         caps_hoy = [ep for ep in episodes if ep['air_date'] == fecha_estreno]
         caps_futuros = [ep for ep in episodes if ep['air_date'] > fecha_estreno]
         
-        # CAMBIO CLAVE: Si la fecha es hoy, ponemos el cartel de alerta
         if fecha_estreno == hoy:
             dia_texto = "🚨 **¡HOY SE ESTRENA!** 🚨"
         else:
@@ -100,7 +104,6 @@ async def ver(update, context):
             
         if caps_futuros:
             msg += "\n🚀 **Cronograma de próximos estrenos:**\n"
-            # Mostramos hasta los próximos 5
             for ep in caps_futuros[:5]:
                 msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
 
@@ -109,7 +112,6 @@ async def ver(update, context):
         else: 
             await update.message.reply_text(msg, parse_mode='Markdown')
     else:
-        # Si no hay próximo estreno, igual mandamos la imagen si existe
         text_no_hay = f"De '{serie['name']}' no hay fechas confirmadas por ahora."
         if img_url: await update.message.reply_photo(photo=img_url, caption=text_no_hay)
         else: await update.message.reply_text(text_no_hay)
@@ -155,7 +157,6 @@ async def revisar_estrenos(update, context):
         u_id = str(update.effective_user.id)
         user_data = coleccion.find_one({"user_id": u_id})
         
-        # Si no hay datos del usuario o la lista de series está vacía
         if not user_data or not user_data.get('series'):
             await update.message.reply_text("No seguís ninguna serie.")
             return
@@ -211,6 +212,11 @@ async def lista_seguimiento(update, context):
 if __name__ == '__main__':
     threading.Thread(target=keep_alive, daemon=True).start()
     app = Application.builder().token(TOKEN_TELEGRAM).build()
+    
+    # --- CONFIGURACIÓN DE TAREA DIARIA ---
+    tz_israel = pytz.timezone('Asia/Jerusalem')
+    app.job_queue.run_daily(tarea_diaria, time=time(9, 0, 0, tzinfo=tz_israel))
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ver", ver))
     app.add_handler(CommandHandler("seguir", seguir))

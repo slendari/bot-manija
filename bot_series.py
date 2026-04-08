@@ -49,7 +49,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ver [serie] - Info del próximo estreno.\n"
         "/seguir [serie] - Guardar serie en tu lista.\n"
         "/borrar [serie] - Dejar de seguir una serie.\n"
-        "/revisar - Ver si hoy se estrena algo de tu lista."
+        "/revisar - Ver si hoy se estrena algo de tu lista.\n"
+        "/lista - Ver todas las series que seguís."
     )
     
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -190,6 +191,23 @@ async def revisar_estrenos(update, context):
     except Exception as e:
         await update.message.reply_text("Error consultando la base de datos.")
 
+async def lista_seguimiento(update, context):
+    try:
+        u_id = str(update.effective_user.id)
+        user_data = coleccion.find_one({"user_id": u_id})
+        
+        if not user_data or not user_data.get('series'):
+            await update.message.reply_text("No seguís ninguna serie.")
+            return
+
+        msg = "📋 **Tus series seguidas:**\n\n"
+        for s in user_data['series']:
+            msg += f"• {s['name']}\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text("Error al leer la lista.")
+
 if __name__ == '__main__':
     threading.Thread(target=keep_alive, daemon=True).start()
     app = Application.builder().token(TOKEN_TELEGRAM).build()
@@ -198,4 +216,5 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("seguir", seguir))
     app.add_handler(CommandHandler("borrar", borrar))
     app.add_handler(CommandHandler("revisar", revisar_estrenos))
+    app.add_handler(CommandHandler("lista", lista_seguimiento))
     app.run_polling()

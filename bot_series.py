@@ -63,7 +63,7 @@ async def ver(update, context):
     nombre = " ".join(context.args)
     serie = buscar_en_tmdb(nombre)
     if not serie:
-        await update.message.reply_text("No encontré esa serie en la base de datos.")
+        await update.message.reply_text("No encontré esa serie.")
         return
 
     det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
@@ -75,36 +75,44 @@ async def ver(update, context):
         hoy = hoy_local()
         num_temp = prox['season_number']
         
-        # Buscar capítulos futuros y foto de temporada específica
+        # Buscar capítulos de la temporada para ver si hay más hoy o a futuro
         temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
-        if temp_data.get('poster_path'):
-            img_url = f"https://image.tmdb.org/t/p/w500{temp_data['poster_path']}"
-            
         episodes = temp_data.get('episodes', [])
+        
+        # Filtrar caps de hoy y futuros
         caps_hoy = [ep for ep in episodes if ep['air_date'] == fecha_estreno]
         caps_futuros = [ep for ep in episodes if ep['air_date'] > fecha_estreno]
         
-        dia_texto = "🚨 **¡HOY SE ESTRENA!** 🚨" if fecha_estreno == hoy else f"📅 **Próximo estreno:** {formatear_fecha(fecha_estreno)}"
+        # CAMBIO CLAVE: Si la fecha es hoy, ponemos el cartel de alerta
+        if fecha_estreno == hoy:
+            dia_texto = "🚨 **¡HOY SE ESTRENA!** 🚨"
+        else:
+            dia_texto = f"📅 **Próximo estreno:** {formatear_fecha(fecha_estreno)}"
         
         msg = f"📺 **{serie['name']}**\n{dia_texto}\n🔢 Temporada {num_temp}\n\n"
         
         if len(caps_hoy) > 1:
-            msg += f"✨ **Se estrenan {len(caps_hoy)} capítulos:**\n"
+            msg += f"✨ **Se estrenan {len(caps_hoy)} capítulos hoy:**\n"
             for ep in caps_hoy: msg += f"• Cap {ep['episode_number']}: {ep['name']}\n"
         else:
             msg += f"🎞️ **Capítulo {prox['episode_number']}:** {prox['name']}\n"
             
         if caps_futuros:
-            msg += "\n🚀 **Próximamente:**\n"
-            for ep in caps_futuros[:5]: msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
+            msg += "\n🚀 **Cronograma de próximos estrenos:**\n"
+            # Mostramos hasta los próximos 5
+            for ep in caps_futuros[:5]:
+                msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
 
-        if img_url: await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
-        else: await update.message.reply_text(msg, parse_mode='Markdown')
+        if img_url: 
+            await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
+        else: 
+            await update.message.reply_text(msg, parse_mode='Markdown')
     else:
-        msg = f"De '{serie['name']}' no hay fechas confirmadas a futuro. Capaz terminó la temporada o está en pausa."
-        if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
-        else: await update.message.reply_text(msg)
-
+        # Si no hay próximo estreno, igual mandamos la imagen si existe
+        text_no_hay = f"De '{serie['name']}' no hay fechas confirmadas por ahora."
+        if img_url: await update.message.reply_photo(photo=img_url, caption=text_no_hay)
+        else: await update.message.reply_text(text_no_hay)
+            
 async def seguir(update, context):
     try:
         nombre = " ".join(context.args)

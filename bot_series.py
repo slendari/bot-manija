@@ -45,7 +45,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "¡Qué hacés bebé! Acá El Manija TV. \n\n"
-        "Con los siguientes comandos podés averiguar novedades de tus series favoritas: \n"
+        "Con los siguientes comandos podés averiguar novedades de tus series favoritas:\n"
         "🔍 /ver [nombre] - Info del próximo estreno.\n"
         "✅ /seguir [nombre] - Guardar serie en tu lista.\n"
         "🗑️ /borrar [nombre] - Dejar de seguir una serie.\n"

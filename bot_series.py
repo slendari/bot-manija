@@ -51,8 +51,37 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
             
             if prox and prox['air_date'] == hoy:
                 num_temp = prox['season_number']
-                msg = f"🚨 **¡AVISO AUTOMÁTICO!** 🚨\n\n📺 **{s['name']}** estrena el capítulo {prox['episode_number']} de la temporada {num_temp} HOY."
-                await context.bot.send_message(chat_id=u_id, text=msg, parse_mode='Markdown')
+                temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                
+                poster = temp_data.get('poster_path') or det.get('poster_path')
+                img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+                
+                episodes = temp_data.get('episodes', [])
+                caps_hoy = [ep for ep in episodes if ep['air_date'] == hoy]
+                caps_siguientes = [ep for ep in episodes if ep['air_date'] > hoy]
+                
+                es_nueva_temp = any(ep['episode_number'] == 1 for ep in caps_hoy)
+                str_caps_hoy = ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy])
+                
+                if es_nueva_temp:
+                    hoy_str = f"Temporada {num_temp}, {str_caps_hoy}"
+                else:
+                    hoy_str = str_caps_hoy
+                    
+                if caps_siguientes:
+                    next_date = caps_siguientes[0]['air_date']
+                    next_caps = [ep for ep in caps_siguientes if ep['air_date'] == next_date]
+                    str_caps_prox = ", ".join([f"Cap {ep['episode_number']}" for ep in next_caps])
+                    prox_str = f"\n📅 Próximo estreno: {formatear_fecha(next_date)}, {str_caps_prox}"
+                else:
+                    prox_str = "\n📅 Próximo estreno: Sin fechas confirmadas"
+
+                msg = f"📽️ **{s['name']}**\n🔔 Hoy se estrena: {hoy_str}{prox_str}"
+
+                if img_url:
+                    await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=msg, parse_mode='Markdown')
+                else:
+                    await context.bot.send_message(chat_id=u_id, text=msg, parse_mode='Markdown')
 
 # --- COMANDOS ---
 
@@ -138,6 +167,7 @@ async def ver(update, context):
         if img_url: await update.message.reply_photo(photo=img_url, caption=text_no_hay)
         else: await update.message.reply_text(text_no_hay)
             
+# --- COMANDO SEGUIR ---
 async def seguir(update, context):
     try:
         nombre = " ".join(context.args)
@@ -154,9 +184,17 @@ async def seguir(update, context):
             if serie['id'] not in [s['id'] for s in series_lista]:
                 series_lista.append({'id': serie['id'], 'name': serie['name']})
                 coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
-                await update.message.reply_text(f"Siguiendo {serie['name']} ✅.")
+                
+                poster = serie.get('poster_path')
+                img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+                msg = f"Ahora seguís a {serie['name']} ✅"
+                
+                if img_url:
+                    await update.message.reply_photo(photo=img_url, caption=msg)
+                else:
+                    await update.message.reply_text(msg)
             else:
-                await update.message.reply_text(f"Ya seguís a {serie['name']}.")
+                await update.message.reply_text(f"Ya seguís a {serie['name']} salame.")
         else:
             await update.message.reply_text("No encontré esa serie.")
     except Exception as e:

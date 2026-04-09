@@ -98,6 +98,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ver(update, context):
     nombre = " ".join(context.args)
+    if not nombre:
+        await update.message.reply_text("Decime qué serie buscar.")
+        return
+        
     serie = buscar_en_tmdb(nombre)
     if not serie:
         await update.message.reply_text("No encontré esa serie.")
@@ -106,7 +110,6 @@ async def ver(update, context):
     det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
     hoy = hoy_local()
     
-    # Saca la temporada actual o la última para buscar los capítulos reales
     prox_tmdb = det.get('next_episode_to_air')
     ult_tmdb = det.get('last_episode_to_air')
     
@@ -115,57 +118,54 @@ async def ver(update, context):
         num_temp = prox_tmdb['season_number']
     elif ult_tmdb:
         num_temp = ult_tmdb['season_number']
-        
-    img_url = f"https://image.tmdb.org/t/p/w500{serie.get('poster_path')}" if serie.get('poster_path') else None
 
     if num_temp is not None:
         temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
-        if temp_data.get('poster_path'):
-            img_url = f"https://image.tmdb.org/t/p/w500{temp_data['poster_path']}"
-            
         episodes = temp_data.get('episodes', [])
         
-        # Filtramos estrictamente los capítulos que sean de HOY en adelante
         eps_pendientes = [ep for ep in episodes if ep.get('air_date') and ep['air_date'] >= hoy]
         
         if eps_pendientes:
             fecha_proximo = eps_pendientes[0]['air_date']
-            
             caps_proximo_dia = [ep for ep in eps_pendientes if ep['air_date'] == fecha_proximo]
             caps_siguientes = [ep for ep in eps_pendientes if ep['air_date'] > fecha_proximo]
             
-            if fecha_proximo == hoy:
-                dia_texto = "🚨 **¡HOY SE ESTRENA!** 🚨"
-            else:
-                dia_texto = f"📅 **Próximo estreno:** {formatear_fecha(fecha_proximo)}"
-                
-            msg = f"📺 **{serie['name']}**\n{dia_texto}\n🔢 Temporada {num_temp}\n\n"
+            str_caps_prox = ", ".join([str(ep['episode_number']) for ep in caps_proximo_dia])
             
-            if len(caps_proximo_dia) > 1:
-                msg += f"✨ **Se estrenan {len(caps_proximo_dia)} capítulos:**\n"
-                for ep in caps_proximo_dia: 
-                    msg += f"• Cap {ep['episode_number']}: {ep['name']}\n"
-            else:
-                ep = caps_proximo_dia[0]
-                msg += f"🎞️ **Capítulo {ep['episode_number']}:** {ep['name']}\n"
+            # --- CASO 1: HAY ESTRENO HOY ---
+            if fecha_proximo == hoy:
+                poster = temp_data.get('poster_path') or serie.get('poster_path')
+                img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
                 
-            if caps_siguientes:
-                msg += "\n🚀 **Cronograma de próximos estrenos:**\n"
-                for ep in caps_siguientes[:3]: # Limitado a los próximos 3
-                    msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
-
-            if img_url: 
-                await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
-            else: 
+                msg = f"📽️ **{serie['name']}**\n"
+                msg += f"🔔 Hoy se estrena: Episodio/s {str_caps_prox}, temporada {num_temp}\n"
+                
+                if caps_siguientes:
+                    msg += "\n📅 Próximos estrenos:\n"
+                    for ep in caps_siguientes[:3]:
+                        msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
+                        
+                if img_url:
+                    await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
+                else:
+                    await update.message.reply_text(msg, parse_mode='Markdown')
+                    
+            # --- CASO 2: EL ESTRENO ES A FUTURO ---
+            else:
+                msg = f"🥱 Hoy no hay estrenos de {serie['name']}\n"
+                msg += f"📅 Próximo estreno: {formatear_fecha(fecha_proximo)}, Cap {str_caps_prox}\n"
+                
+                if caps_siguientes:
+                    msg += "\n🔍 Cronograma completo:\n"
+                    for ep in caps_siguientes[:3]:
+                        msg += f"• {formatear_fecha(ep['air_date'])} - Cap {ep['episode_number']}\n"
+                        
+                # Mandamos solo texto, sin foto
                 await update.message.reply_text(msg, parse_mode='Markdown')
         else:
-            text_no_hay = f"De '{serie['name']}' no hay fechas confirmadas por ahora."
-            if img_url: await update.message.reply_photo(photo=img_url, caption=text_no_hay)
-            else: await update.message.reply_text(text_no_hay)
+            await update.message.reply_text(f"De '{serie['name']}' no hay fechas confirmadas por ahora.")
     else:
-        text_no_hay = f"De '{serie['name']}' no hay fechas confirmadas por ahora."
-        if img_url: await update.message.reply_photo(photo=img_url, caption=text_no_hay)
-        else: await update.message.reply_text(text_no_hay)
+        await update.message.reply_text(f"De '{serie['name']}' no hay fechas confirmadas por ahora.")
             
 # --- COMANDO SEGUIR ---
 async def seguir(update, context):

@@ -201,15 +201,39 @@ async def seguir(update, context):
         await update.message.reply_text("Error con la base de datos.")
 
 async def borrar(update, context):
-    nombre = " ".join(context.args).lower()
+    nombre = " ".join(context.args)
+    if not nombre:
+        await update.message.reply_text("Decime qué serie borrar.")
+        return
+
     u_id = str(update.effective_user.id)
     user_data = coleccion.find_one({"user_id": u_id})
-    if user_data:
-        nueva = [s for s in user_data['series'] if nombre not in s['name'].lower()]
-        if len(nueva) < len(user_data['series']):
-            coleccion.update_one({"user_id": u_id}, {"$set": {"series": nueva}})
-            await update.message.reply_text("🗑️ Eliminada de tu lista.")
+    
+    if not user_data or not user_data.get('series'):
+        await update.message.reply_text("No seguís ninguna serie.")
+        return
+
+    # 1. Buscamos en TMDB para que reconozca el ID oficial (entiende inglés/español)
+    serie_tmdb = buscar_en_tmdb(nombre)
+    
+    if serie_tmdb:
+        id_buscado = serie_tmdb['id']
+        nueva_lista = [s for s in user_data['series'] if s['id'] != id_buscado]
+        
+        if len(nueva_lista) < len(user_data['series']):
+            coleccion.update_one({"user_id": u_id}, {"$set": {"series": nueva_lista}})
+            await update.message.reply_text(f"🗑️ {serie_tmdb['name']} eliminada de tu lista.")
             return
+
+    # 2. Plan B: Si TMDB falla, busca por coincidencia de texto (como antes)
+    nombre_lower = nombre.lower()
+    nueva_lista = [s for s in user_data['series'] if nombre_lower not in s['name'].lower()]
+    
+    if len(nueva_lista) < len(user_data['series']):
+        coleccion.update_one({"user_id": u_id}, {"$set": {"series": nueva_lista}})
+        await update.message.reply_text("🗑️ Eliminada de tu lista.")
+        return
+
     await update.message.reply_text("No encontré esa serie en tu lista.")
 
 async def revisar_estrenos(update, context):

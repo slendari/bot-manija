@@ -72,8 +72,21 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
 # --- COMANDOS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u_id = str(update.effective_user.id)
+    nombre_user = update.effective_user.first_name  # Sacamos el nombre de Telegram
+    
+    # Buscamos si el usuario ya está en la base de datos
+    user_data = coleccion.find_one({"user_id": u_id})
+    
+    if not user_data:
+        # Si es nuevo, lo registramos con su nombre y lista vacía
+        coleccion.insert_one({"user_id": u_id, "nombre": nombre_user, "series": []})
+    else:
+        # Si ya existe, actualizamos el nombre por si se lo cambió en Telegram
+        coleccion.update_one({"user_id": u_id}, {"$set": {"nombre": nombre_user}})
+
     await update.message.reply_text(
-        "¡Qué hacés bebé! Acá El ManijaTV 🍿. \n\n"
+        f"¡Qué hacés {nombre_user}! Acá El ManijaTV 🍿.\n\n"
         "- /ver [serie] - Info del próximo estreno.\n"
         "- /seguir [serie] - Guardar serie en tu lista.\n"
         "- /borrar [serie] - Dejar de seguir una serie.\n"
@@ -245,6 +258,64 @@ async def sinopsis(update, context):
     else:
         await update.message.reply_text(msg, parse_mode='Markdown')
 
+ADMIN_ID = os.environ.get('ADMIN_ID')
+
+async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    
+    # Seguridad: solo vos podés usar este comando
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("No tenés permiso para hacer esto, fiera.")
+        return
+
+    # Agarramos el texto que viene después de /difundir
+    mensaje = " ".join(context.args)
+    if not mensaje:
+        await update.message.reply_text("Che, escribí algo para mandar.")
+        return
+
+    usuarios = coleccion.find()
+    exitos = 0
+    errores = 0
+
+    for u in usuarios:
+        try:
+            await context.bot.send_message(
+                chat_id=u['user_id'], 
+                text=f"📢 **MENSAJE IMPORTANTE**\n\n{mensaje}", 
+                parse_mode='Markdown'
+            )
+            exitos += 1
+        except:
+            # Si el usuario bloqueó al bot, va a tirar error
+            errores += 1
+
+    await update.message.reply_text(f"✅ Difusión terminada.\nEnviados: {exitos}\nFallidos (bloqueados): {errores}")
+
+async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    
+    # Solo vos podés ver esto
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("¿Qué hacés chusmeando? No tenés permiso.")
+        return
+
+    usuarios = coleccion.find()
+    lista_msg = "👥 **Usuarios registrados:**\n\n"
+    
+    contador = 0
+    for u in usuarios:
+        contador += 1
+        # Intentamos sacar info del usuario (esto solo funciona si el bot tiene chats recientes)
+        u_id = u['user_id']
+        cantidad_series = len(u.get('series', []))
+        lista_msg += f"{contador}. ID: `{u_id}` - Series: {cantidad_series}\n"
+
+    if contador == 0:
+        await update.message.reply_text("No hay nadie todavía, estás más solo que el 1.")
+    else:
+        await update.message.reply_text(lista_msg, parse_mode='Markdown')
+
 if __name__ == '__main__':
     # 1. Primero lanzamos el servidor para Render
     threading.Thread(target=keep_alive, daemon=True).start()
@@ -264,6 +335,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("revisar", revisar_estrenos))
     app.add_handler(CommandHandler("lista", lista_seguimiento))
     app.add_handler(CommandHandler("sinopsis", sinopsis)) # <--- ACÁ VA EL NUEVO
+    app.add_handler(CommandHandler("difundir", difundir))
+    app.add_handler(CommandHandler("usuarios", ver_usuarios))
     
     # 5. El filtro para mensajes desconocidos siempre va AL FINAL de los handlers
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))

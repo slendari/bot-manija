@@ -74,11 +74,12 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "¡Qué hacés bebé! Acá El ManijaTV 🍿. \n\n"
-        "/ver [serie] - Info del próximo estreno.\n"
-        "/seguir [serie] - Guardar serie en tu lista.\n"
-        "/borrar [serie] - Dejar de seguir una serie.\n"
-        "/revisar - Ver si hoy se estrena algo de tu lista.\n"
-        "/lista - Ver todas las series que seguís."
+        "- /ver [serie] - Info del próximo estreno.\n"
+        "- /seguir [serie] - Guardar serie en tu lista.\n"
+        "- /borrar [serie] - Dejar de seguir una serie.\n"
+        "- /revisar - Ver si hoy se estrena algo de tu lista.\n"
+        "- /lista - Ver todas las series que seguís.\n"
+        "- /sinopsis [serie] - Leer una sinopsis de cualquier serie."
     )
 
 async def ver(update, context):
@@ -211,8 +212,11 @@ async def lista_seguimiento(update, context):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text and update.message.text.startswith('/'):
-        await update.message.reply_text('No te entendí 🤷.\nUsá un comando del botón "Menú".')
+    # Esto responde a cualquier texto o comando que no hayamos programado arriba
+    await update.message.reply_text(
+        'No te entendí 🤷.\n'
+        'Usá un comando del botón "Menú" para interactuar conmigo.'
+    )
 
 async def sinopsis(update, context):
     nombre = " ".join(context.args)

@@ -37,7 +37,7 @@ def hoy_local():
     tz = pytz.timezone('Asia/Jerusalem')
     return datetime.now(tz).strftime("%Y-%m-%d")
 
-# --- FUNCIÓN DE AVISO AUTOMÁTICO ---
+# --- FUNCIÓN DE AVISO AUTOMÁTICO (9 AM) ---
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
     usuarios = coleccion.find()
@@ -202,4 +202,41 @@ async def revisar_estrenos(update, context):
         if prox and prox['air_date'] == hoy:
             encontrado = True
             num_t = prox['season_number']
-            temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?
+            temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
+            
+            poster = temp_data.get('poster_path') or det.get('poster_path')
+            img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+            caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
+            str_caps = ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy])
+            
+            msg = f"📽️ **{s['name']}**\n🔔 Hoy se estrena: {str_caps}, temporada {num_t}"
+            
+            if img_url: await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
+            else: await update.message.reply_text(msg, parse_mode='Markdown')
+                
+    if not encontrado:
+        await update.message.reply_text("❌ Hoy no hay estrenos de tus series.")
+
+async def lista_seguimiento(update, context):
+    u_id = str(update.effective_user.id)
+    user_data = coleccion.find_one({"user_id": u_id})
+    if not user_data or not user_data.get('series'):
+        await update.message.reply_text("No seguís ninguna serie.")
+        return
+    msg = "📋 **Tus series seguidas:**\n\n" + "\n".join([f"• {s['name']}" for s in user_data['series']])
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+if __name__ == '__main__':
+    threading.Thread(target=keep_alive, daemon=True).start()
+    app = Application.builder().token(TOKEN_TELEGRAM).build()
+    
+    tz_israel = pytz.timezone('Asia/Jerusalem')
+    app.job_queue.run_daily(tarea_diaria, time=time(9, 0, 0, tzinfo=tz_israel))
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ver", ver))
+    app.add_handler(CommandHandler("seguir", seguir))
+    app.add_handler(CommandHandler("borrar", borrar))
+    app.add_handler(CommandHandler("revisar", revisar_estrenos))
+    app.add_handler(CommandHandler("lista", lista_seguimiento))
+    app.run_polling()

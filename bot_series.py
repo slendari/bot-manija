@@ -37,6 +37,15 @@ def hoy_local():
     tz = pytz.timezone('Asia/Jerusalem')
     return datetime.now(tz).strftime("%Y-%m-%d")
 
+def obtener_poster_temporada(serie_id, num_temp, poster_default):
+    try:
+        url = f"https://api.themoviedb.org/3/tv/{serie_id}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES"
+        res = requests.get(url).json()
+        poster = res.get('poster_path') or poster_default
+        return f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+    except:
+        return f"https://image.tmdb.org/t/p/w500{poster_default}" if poster_default else None
+
 # --- FUNCIÓN DE AVISO AUTOMÁTICO (9 AM) ---
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
@@ -49,18 +58,16 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
             prox = det.get('next_episode_to_air')
             
             if prox and prox['air_date'] == hoy:
-                num_temp = prox['season_number']
-                temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
-                episodes = temp_data.get('episodes', [])
-                caps_hoy = [ep for ep in episodes if ep['air_date'] == hoy]
+                num_t = prox['season_number']
+                temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
                 
-                if len(caps_hoy) > 3:
-                    det_estreno = f"Nueva temporada {num_temp}"
-                else:
-                    det_estreno = ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_temp}"
-                
+                det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
+                img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
                 msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
-                await context.bot.send_message(chat_id=u_id, text=msg)
+
+                if img_url: await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=msg)
+                else: await context.bot.send_message(chat_id=u_id, text=msg)
 
 # --- COMANDOS ---
 
@@ -101,12 +108,11 @@ async def ver(update, context):
             caps_sig = [ep for ep in eps_pendientes if ep['air_date'] > fecha_prox]
             
             if fecha_prox == hoy:
-                if len(caps_dia) > 3:
-                    det_estreno = f"Nueva temporada {num_temp}"
-                else:
-                    det_estreno = ", ".join([f"Cap {ep['episode_number']}" for ep in caps_dia]) + f", Temporada {num_temp}"
+                det_estreno = f"Nueva temporada {num_temp}" if len(caps_dia) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_dia]) + f", Temporada {num_temp}"
+                img_url = obtener_poster_temporada(serie['id'], num_temp, det.get('poster_path'))
                 msg = f"📺 {serie['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
-                await update.message.reply_text(msg)
+                if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
+                else: await update.message.reply_text(msg)
             else:
                 msg = f"📺 {serie['name']}\n❌ Hoy no hay estrenos.\n\n📅 Próximos estrenos:\n"
                 for ep in (caps_dia + caps_sig)[:3]:
@@ -132,13 +138,9 @@ async def seguir(update, context):
                 
                 det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
                 prox = det.get('next_episode_to_air') or det.get('last_episode_to_air')
-                poster = serie.get('poster_path')
-                if prox:
-                    num_t = prox['season_number']
-                    temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
-                    poster = temp_data.get('poster_path') or poster
-                
-                img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+                num_t = prox['season_number'] if prox else 1
+                img_url = obtener_poster_temporada(serie['id'], num_t, det.get('poster_path'))
+
                 msg = f"📺 {serie['name']}\n✅ Añadido a tu lista."
                 if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
                 else: await update.message.reply_text(msg)
@@ -163,10 +165,11 @@ async def borrar(update, context):
             await update.message.reply_text(f"📺 {serie_tmdb['name']}\n🗑️ Eliminado de tu lista.")
             return
 
-    nueva = [s for s in user_data['series'] if nombre.lower() not in s['name'].lower()]
+    nueva = [s for s in user_data['series'] if nombre.lower() in s['name'].lower()]
     if len(nueva) < len(user_data['series']):
-        coleccion.update_one({"user_id": u_id}, {"$set": {"series": nueva}})
-        await update.message.reply_text(f"📺 {nombre.capitalize()}\n🗑️ Eliminado de tu lista.")
+        nombre_real = nueva[0]['name'] if len(nueva) == 1 else nombre.capitalize()
+        coleccion.update_one({"user_id": u_id}, {"$set": {"series": [s for s in user_data['series'] if nombre.lower() not in s['name'].lower()]}})
+        await update.message.reply_text(f"📺 {nombre_real}\n🗑️ Eliminado de tu lista.")
     else:
         await update.message.reply_text("No está esa serie en tu lista.")
 
@@ -188,13 +191,12 @@ async def revisar_estrenos(update, context):
             temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
             caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
             
-            if len(caps_hoy) > 3:
-                det_estreno = f"Nueva temporada {num_t}"
-            else:
-                det_estreno = ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
-            
+            det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
+            img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
             msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
-            await update.message.reply_text(msg)
+            
+            if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
+            else: await update.message.reply_text(msg)
                 
     if not encontrado:
         await update.message.reply_text("❌ Hoy no hay estrenos de tus series.")
@@ -209,7 +211,7 @@ async def lista_seguimiento(update, context):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.startswith('/'):
+    if update.message.text and update.message.text.startswith('/'):
         await update.message.reply_text('No te entendí 🤷.\nUsá un comando del botón "Menú".')
 
 if __name__ == '__main__':

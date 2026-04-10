@@ -214,18 +214,55 @@ async def desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text and update.message.text.startswith('/'):
         await update.message.reply_text('No te entendí 🤷.\nUsá un comando del botón "Menú".')
 
+async def sinopsis(update, context):
+    nombre = " ".join(context.args)
+    if not nombre:
+        await update.message.reply_text("Decime de qué serie o peli querés la sinopsis.")
+        return
+
+    res = buscar_en_tmdb(nombre)
+    if not res:
+        await update.message.reply_text("No encontré nada con ese nombre.")
+        return
+
+    # Determinamos si es serie (tv) o peli (movie)
+    tipo = res.get('media_type', 'tv')
+    det = requests.get(f"https://api.themoviedb.org/3/{tipo}/{res['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+
+    nombre_final = det.get('name') or det.get('title')
+    resumen = det.get('overview') or "No hay sinopsis disponible en español por ahora."
+    poster = det.get('poster_path')
+    img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
+
+    msg = f"📖 **{nombre_final}**\n\n{resumen}"
+
+    if img_url:
+        await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
 if __name__ == '__main__':
+    # 1. Primero lanzamos el servidor para Render
     threading.Thread(target=keep_alive, daemon=True).start()
+
+    # 2. Creamos la aplicación (¡ESTO VA ANTES QUE LOS HANDLERS!)
     app = Application.builder().token(TOKEN_TELEGRAM).build()
     
+    # 3. Configuramos la tarea diaria
     tz_israel = pytz.timezone('Asia/Jerusalem')
     app.job_queue.run_daily(tarea_diaria, time=time(9, 0, 0, tzinfo=tz_israel))
     
+    # 4. Agregamos todos los comandos (handlers)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ver", ver))
     app.add_handler(CommandHandler("seguir", seguir))
     app.add_handler(CommandHandler("borrar", borrar))
     app.add_handler(CommandHandler("revisar", revisar_estrenos))
     app.add_handler(CommandHandler("lista", lista_seguimiento))
+    app.add_handler(CommandHandler("sinopsis", sinopsis)) # <--- ACÁ VA EL NUEVO
+    
+    # 5. El filtro para mensajes desconocidos siempre va AL FINAL de los handlers
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))
+    
+    # 6. Arrancamos el bot
     app.run_polling()

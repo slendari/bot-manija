@@ -114,7 +114,7 @@ async def ver(update, context):
                 if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
                 else: await update.message.reply_text(msg)
             else:
-                msg = f"📺 {serie['name']}\n❌ Hoy no hay estrenos.\n\n📅 Próximos estrenos:\n"
+                msg = f"📺 {serie['name']}\n❌ Hoy no hay estrenos.\n\n📅 Próximos estrenos:\n🔢 Temporada {num_temp}\n"
                 for ep in (caps_dia + caps_sig)[:3]:
                     msg += f"- Cap {ep['episode_number']}: {formatear_fecha(ep['air_date'])}\n"
                 await update.message.reply_text(msg)

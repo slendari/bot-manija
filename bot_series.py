@@ -145,7 +145,7 @@ async def seguir(update, context):
                 if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
                 else: await update.message.reply_text(msg)
             else:
-                await update.message.reply_text(f"{serie['name']} ya está en tu lista.")
+                await update.message.reply_text(f"Esa serie ya está en tu lista.")
     except:
         await update.message.reply_text("Error con la base de datos.")
 

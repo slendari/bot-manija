@@ -294,8 +294,6 @@ async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    
-    # Solo vos podés ver esto
     if user_id != ADMIN_ID:
         await update.message.reply_text("¿Qué hacés chusmeando? No tenés permiso.")
         return
@@ -306,13 +304,15 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contador = 0
     for u in usuarios:
         contador += 1
-        # Intentamos sacar info del usuario (esto solo funciona si el bot tiene chats recientes)
+        # Buscamos el nombre. Si no está (porque no puso /start todavía), ponemos "Anónimo"
+        nombre = u.get('nombre', 'Anónimo (debe poner /start)')
         u_id = u['user_id']
-        cantidad_series = len(u.get('series', []))
-        lista_msg += f"{contador}. ID: `{u_id}` - Series: {cantidad_series}\n"
+        cant = len(u.get('series', []))
+        
+        lista_msg += f"{contador}. **{nombre}** (ID: `{u_id}`) - Series: {cant}\n"
 
     if contador == 0:
-        await update.message.reply_text("No hay nadie todavía, estás más solo que el 1.")
+        await update.message.reply_text("No hay nadie todavía.")
     else:
         await update.message.reply_text(lista_msg, parse_mode='Markdown')
 

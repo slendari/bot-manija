@@ -87,12 +87,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"¡Qué hacés {nombre_user}! Acá El ManijaTV 🍿.\n\n"
-        "- /ver [serie] - Info del próximo estreno.\n"
-        "- /seguir [serie] - Guardar serie en tu lista.\n"
-        "- /borrar [serie] - Dejar de seguir una serie.\n"
-        "- /revisar - Ver si hoy se estrena algo de tu lista.\n"
-        "- /lista - Ver todas las series que seguís.\n"
-        "- /sinopsis [serie] - Leer una sinopsis de cualquier serie."
+        "• /ver [serie] - Info del próximo estreno.\n"
+        "• /seguir [serie] - Guardar serie en tu lista.\n"
+        "• /borrar [serie] - Dejar de seguir una serie.\n"
+        "• /revisar - Ver si hoy se estrena algo de tu lista.\n"
+        "• /lista - Ver todas las series que seguís.\n"
+        "• /sinopsis [serie] - Leer una sinopsis de cualquier serie."
     )
 
 async def ver(update, context):

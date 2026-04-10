@@ -145,7 +145,7 @@ async def seguir(update, context):
                 if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
                 else: await update.message.reply_text(msg)
             else:
-                await update.message.reply_text(f"Ya seguís a {serie['name']} salame.")
+                await update.message.reply_text(f"{serie['name']} ya está en tu lista.")
     except:
         await update.message.reply_text("Error con la base de datos.")
 
@@ -205,9 +205,9 @@ async def lista_seguimiento(update, context):
     u_id = str(update.effective_user.id)
     user_data = coleccion.find_one({"user_id": u_id})
     if not user_data or not user_data.get('series'):
-        await update.message.reply_text("No seguís ninguna serie.")
+        await update.message.reply_text("No hay ninguna serie en tu lista.")
         return
-    msg = "📋 **Tus series seguidas:**\n\n" + "\n".join([f"• {s['name']}" for s in user_data['series']])
+    msg = "📋 **Tu lista de series:**\n\n" + "\n".join([f"• {s['name']}" for s in user_data['series']])
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):

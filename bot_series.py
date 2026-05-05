@@ -325,7 +325,7 @@ if __name__ == '__main__':
     
     # 3. Configuramos la tarea diaria
     tz_israel = pytz.timezone('Asia/Jerusalem')
-    app.job_queue.run_daily(tarea_diaria, time=time(9, 0, 0, tzinfo=tz_israel))
+    app.job_queue.run_daily(tarea_diaria, time=time(0, 0, 0, tzinfo=tz_israel))
     
     # 4. Agregamos todos los comandos (handlers)
     app.add_handler(CommandHandler("start", start))

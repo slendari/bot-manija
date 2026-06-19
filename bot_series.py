@@ -1,13 +1,12 @@
 import requests
 import os
 import threading
-import http.server
-import socketserver
 from datetime import datetime, time
 import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
+from flask import Flask
 
 # --- CONFIGURACIÓN (Segura mediante variables de entorno) ---
 TOKEN_TELEGRAM = os.environ.get('TOKEN_TELEGRAM')
@@ -18,10 +17,16 @@ client = MongoClient(MONGO_URI)
 db = client['el_manija_db']
 coleccion = db['usuarios_series']
 
+# --- SERVIDOR WEB ESTABLE CON FLASK ---
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "El Manija TV sigue vivo!", 200
+
 def keep_alive():
     port = int(os.environ.get("PORT", 8080))
-    with socketserver.TCPServer(("", port), http.server.SimpleHTTPRequestHandler) as httpd:
-        httpd.serve_forever()
+    flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 def buscar_en_tmdb(nombre):
     res = requests.get(f"https://api.themoviedb.org/3/search/tv?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES").json()
@@ -46,7 +51,7 @@ def obtener_poster_temporada(serie_id, num_temp, poster_default):
     except:
         return f"https://image.tmdb.org/t/p/w500{poster_default}" if poster_default else None
 
-# --- FUNCIÓN DE AVISO AUTOMÁTICO (9 AM) ---
+# --- FUNCIÓN DE AVISO AUTOMÁTICO (12 AM) ---
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
     usuarios = coleccion.find()
@@ -73,16 +78,13 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = str(update.effective_user.id)
-    nombre_user = update.effective_user.first_name  # Sacamos el nombre de Telegram
+    nombre_user = update.effective_user.first_name
     
-    # Buscamos si el usuario ya está en la base de datos
     user_data = coleccion.find_one({"user_id": u_id})
     
     if not user_data:
-        # Si es nuevo, lo registramos con su nombre y lista vacía
         coleccion.insert_one({"user_id": u_id, "nombre": nombre_user, "series": []})
     else:
-        # Si ya existe, actualizamos el nombre por si se lo cambió en Telegram
         coleccion.update_one({"user_id": u_id}, {"$set": {"nombre": nombre_user}})
 
     await update.message.reply_text(
@@ -225,7 +227,6 @@ async def lista_seguimiento(update, context):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def desconocido(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Esto responde a cualquier texto o comando que no hayamos programado arriba
     await update.message.reply_text(
         'No te entendí 🤷.\n'
         'Usá un comando del botón "Menú" para interactuar conmigo.'
@@ -242,7 +243,6 @@ async def sinopsis(update, context):
         await update.message.reply_text("No encontré nada con ese nombre.")
         return
 
-    # Determinamos si es serie (tv) o peli (movie)
     tipo = res.get('media_type', 'tv')
     det = requests.get(f"https://api.themoviedb.org/3/{tipo}/{res['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
 
@@ -263,12 +263,10 @@ ADMIN_ID = os.environ.get('ADMIN_ID')
 async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
-    # Seguridad: solo vos podés usar este comando
     if user_id != ADMIN_ID:
         await update.message.reply_text("No tenés permiso para hacer esto, fiera.")
         return
 
-    # Agarramos el texto que viene después de /difundir
     mensaje = " ".join(context.args)
     if not mensaje:
         await update.message.reply_text("Che, escribí algo para mandar.")
@@ -287,7 +285,6 @@ async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             exitos += 1
         except:
-            # Si el usuario bloqueó al bot, va a tirar error
             errores += 1
 
     await update.message.reply_text(f"✅ Difusión terminada.\nEnviados: {exitos}\nFallidos (bloqueados): {errores}")
@@ -304,7 +301,6 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contador = 0
     for u in usuarios:
         contador += 1
-        # Buscamos el nombre. Si no está (porque no puso /start todavía), ponemos "Anónimo"
         nombre = u.get('nombre', 'Anónimo (debe poner /start)')
         u_id = u['user_id']
         cant = len(u.get('series', []))
@@ -317,29 +313,23 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(lista_msg, parse_mode='Markdown')
 
 if __name__ == '__main__':
-    # 1. Primero lanzamos el servidor para Render
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    # 2. Creamos la aplicación (¡ESTO VA ANTES QUE LOS HANDLERS!)
     app = Application.builder().token(TOKEN_TELEGRAM).build()
     
-    # 3. Configuramos la tarea diaria
     tz_israel = pytz.timezone('Asia/Jerusalem')
     app.job_queue.run_daily(tarea_diaria, time=time(0, 0, 0, tzinfo=tz_israel))
     
-    # 4. Agregamos todos los comandos (handlers)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ver", ver))
     app.add_handler(CommandHandler("seguir", seguir))
     app.add_handler(CommandHandler("borrar", borrar))
     app.add_handler(CommandHandler("revisar", revisar_estrenos))
     app.add_handler(CommandHandler("lista", lista_seguimiento))
-    app.add_handler(CommandHandler("sinopsis", sinopsis)) # <--- ACÁ VA EL NUEVO
+    app.add_handler(CommandHandler("sinopsis", sinopsis))
     app.add_handler(CommandHandler("difundir", difundir))
     app.add_handler(CommandHandler("usuarios", ver_usuarios))
     
-    # 5. El filtro para mensajes desconocidos siempre va AL FINAL de los handlers
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))
     
-    # 6. Arrancamos el bot
     app.run_polling()

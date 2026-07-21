@@ -1,12 +1,20 @@
 import requests
 import os
 import threading
+import logging
 from datetime import datetime, time
 import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 from flask import Flask
+
+# --- LOGGING (para ver qué pasa en Render sin adivinar) ---
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # --- CONFIGURACIÓN (Segura mediante variables de entorno) ---
 TOKEN_TELEGRAM = os.environ.get('TOKEN_TELEGRAM')
@@ -54,34 +62,41 @@ def obtener_poster_temporada(serie_id, num_temp, poster_default):
 # --- FUNCIÓN DE AVISO AUTOMÁTICO (12 AM) ---
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
-    usuarios = coleccion.find()
-    
+    try:
+        usuarios = coleccion.find()
+    except Exception:
+        logger.exception("Error al conectar con Mongo en la tarea diaria")
+        return
+
     for user_data in usuarios:
         u_id = user_data['user_id']
         for s in user_data.get('series', []):
-            det = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
-            prox = det.get('next_episode_to_air')
-            
-            if prox and prox['air_date'] == hoy:
-                num_t = prox['season_number']
-                temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
-                caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
-                
-                det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
-                img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
-                msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
+            try:
+                det = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                prox = det.get('next_episode_to_air')
 
-                if img_url: await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=msg)
-                else: await context.bot.send_message(chat_id=u_id, text=msg)
+                if prox and prox['air_date'] == hoy:
+                    num_t = prox['season_number']
+                    temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                    caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
+
+                    det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
+                    img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
+                    msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
+
+                    if img_url: await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=msg)
+                    else: await context.bot.send_message(chat_id=u_id, text=msg)
+            except Exception:
+                logger.exception(f"Error revisando estrenos de {s.get('name')} para el usuario {u_id}")
 
 # --- COMANDOS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u_id = str(update.effective_user.id)
     nombre_user = update.effective_user.first_name
-    
+
     user_data = coleccion.find_one({"user_id": u_id})
-    
+
     if not user_data:
         coleccion.insert_one({"user_id": u_id, "nombre": nombre_user, "series": []})
     else:
@@ -117,12 +132,12 @@ async def ver(update, context):
         temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
         episodes = temp_data.get('episodes', [])
         eps_pendientes = [ep for ep in episodes if ep.get('air_date') and ep['air_date'] >= hoy]
-        
+
         if eps_pendientes:
             fecha_prox = eps_pendientes[0]['air_date']
             caps_dia = [ep for ep in eps_pendientes if ep['air_date'] == fecha_prox]
             caps_sig = [ep for ep in eps_pendientes if ep['air_date'] > fecha_prox]
-            
+
             if fecha_prox == hoy:
                 det_estreno = f"Nueva temporada {num_temp}" if len(caps_dia) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_dia]) + f", Temporada {num_temp}"
                 img_url = obtener_poster_temporada(serie['id'], num_temp, det.get('poster_path'))
@@ -151,7 +166,7 @@ async def seguir(update, context):
             if serie['id'] not in [s['id'] for s in series_lista]:
                 series_lista.append({'id': serie['id'], 'name': serie['name']})
                 coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
-                
+
                 det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
                 prox = det.get('next_episode_to_air') or det.get('last_episode_to_air')
                 num_t = prox['season_number'] if prox else 1
@@ -162,8 +177,9 @@ async def seguir(update, context):
                 else: await update.message.reply_text(msg)
             else:
                 await update.message.reply_text(f"Esa serie ya está en tu lista.")
-    except:
-        await update.message.reply_text("Error con la base de datos.")
+    except Exception:
+        logger.exception("Error en /seguir")
+        await update.message.reply_text("Uy, hubo un error con la base de datos. Probá de nuevo en un toque.")
 
 async def borrar(update, context):
     nombre = " ".join(context.args)
@@ -171,7 +187,7 @@ async def borrar(update, context):
     u_id = str(update.effective_user.id)
     user_data = coleccion.find_one({"user_id": u_id})
     if not user_data or not user_data.get('series'): return
-    
+
     serie_tmdb = buscar_en_tmdb(nombre)
     if serie_tmdb:
         id_b = serie_tmdb['id']
@@ -206,14 +222,14 @@ async def revisar_estrenos(update, context):
             num_t = prox['season_number']
             temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
             caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
-            
+
             det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
             img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
             msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
-            
+
             if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
             else: await update.message.reply_text(msg)
-                
+
     if not encontrado:
         await update.message.reply_text("❌ Hoy no hay estrenos de tus series.")
 
@@ -262,7 +278,7 @@ ADMIN_ID = os.environ.get('ADMIN_ID')
 
 async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
-    
+
     if user_id != ADMIN_ID:
         await update.message.reply_text("No tenés permiso para hacer esto, fiera.")
         return
@@ -279,12 +295,12 @@ async def difundir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for u in usuarios:
         try:
             await context.bot.send_message(
-                chat_id=u['user_id'], 
-                text=f"📢 **MENSAJE IMPORTANTE**\n\n{mensaje}", 
+                chat_id=u['user_id'],
+                text=f"📢 **MENSAJE IMPORTANTE**\n\n{mensaje}",
                 parse_mode='Markdown'
             )
             exitos += 1
-        except:
+        except Exception:
             errores += 1
 
     await update.message.reply_text(f"✅ Difusión terminada.\nEnviados: {exitos}\nFallidos (bloqueados): {errores}")
@@ -297,14 +313,14 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     usuarios = coleccion.find()
     lista_msg = "👥 **Usuarios registrados:**\n\n"
-    
+
     contador = 0
     for u in usuarios:
         contador += 1
         nombre = u.get('nombre', 'Anónimo (debe poner /start)')
         u_id = u['user_id']
         cant = len(u.get('series', []))
-        
+
         lista_msg += f"{contador}. **{nombre}** (ID: `{u_id}`) - Series: {cant}\n"
 
     if contador == 0:
@@ -312,14 +328,29 @@ async def ver_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(lista_msg, parse_mode='Markdown')
 
+# --- MANEJADOR GLOBAL DE ERRORES ---
+# Atrapa cualquier excepción no controlada que salte en un handler.
+# Antes: el bot se quedaba mudo y el error solo se veía escarbando en los logs.
+# Ahora: se loguea igual, pero además el usuario recibe un aviso.
+async def manejador_errores(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Excepción no controlada procesando un update:", exc_info=context.error)
+
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "Uy, tuve un problema procesando eso. Probá de nuevo en un ratito 🛠️"
+            )
+        except Exception:
+            logger.exception("No pude ni siquiera avisarle al usuario del error")
+
 if __name__ == '__main__':
     threading.Thread(target=keep_alive, daemon=True).start()
 
     app = Application.builder().token(TOKEN_TELEGRAM).build()
-    
+
     tz_israel = pytz.timezone('Asia/Jerusalem')
     app.job_queue.run_daily(tarea_diaria, time=time(0, 0, 0, tzinfo=tz_israel))
-    
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ver", ver))
     app.add_handler(CommandHandler("seguir", seguir))
@@ -329,7 +360,9 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("sinopsis", sinopsis))
     app.add_handler(CommandHandler("difundir", difundir))
     app.add_handler(CommandHandler("usuarios", ver_usuarios))
-    
+
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))
-    
+
+    app.add_error_handler(manejador_errores)
+
     app.run_polling()

@@ -4,8 +4,8 @@ import threading
 import logging
 from datetime import datetime, time
 import pytz
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from pymongo import MongoClient
 from flask import Flask
 
@@ -44,14 +44,6 @@ def tmdb_json(url):
 def buscar_en_tmdb(nombre):
     res = tmdb_json(f"https://api.themoviedb.org/3/search/tv?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES")
     return res['results'][0] if res.get('results') else None
-
-def buscar_multi(nombre):
-    """Busca series y películas; devuelve el primer resultado que sea tv o movie."""
-    res = tmdb_json(f"https://api.themoviedb.org/3/search/multi?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES")
-    for r in res.get('results', []):
-        if r.get('media_type') in ('tv', 'movie'):
-            return r
-    return None
 
 def formatear_fecha(fecha_str):
     if not fecha_str: return "Sin fecha"
@@ -125,24 +117,78 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /sinopsis [serie] - Leer una sinopsis de cualquier serie."
     )
 
+# --- ELECCIÓN DE SERIE CON BOTONES ---
+def buscar_opciones(nombre, incluir_peliculas=False, maximo=5):
+    """Devuelve hasta `maximo` resultados de TMDB para que el usuario elija."""
+    endpoint = "multi" if incluir_peliculas else "tv"
+    res = tmdb_json(f"https://api.themoviedb.org/3/search/{endpoint}?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES")
+    resultados = []
+    for r in res.get('results', []):
+        tipo = r.get('media_type', 'tv')  # /search/tv no trae media_type
+        if tipo in ('tv', 'movie'):
+            r['media_type'] = tipo
+            resultados.append(r)
+    return resultados[:maximo]
+
+def etiqueta_opcion(r):
+    nombre = r.get('name') or r.get('title') or "Sin nombre"
+    fecha = r.get('first_air_date') or r.get('release_date') or ""
+    anio = f" ({fecha[:4]})" if fecha else ""
+    icono = "🎬" if r['media_type'] == 'movie' else "📺"
+    return f"{icono} {nombre}{anio}"
+
+async def mostrar_opciones(update, accion, nombre, incluir_peliculas=False):
+    """Si hay un solo resultado lo ejecuta directo; si hay varios, muestra botones."""
+    resultados = buscar_opciones(nombre, incluir_peliculas)
+    if not resultados:
+        await update.message.reply_text("No encontré nada con ese nombre.")
+        return
+    if len(resultados) == 1:
+        r = resultados[0]
+        await ejecutar_accion(update.message, str(update.effective_user.id), accion, r['media_type'], r['id'])
+        return
+    botones = [
+        [InlineKeyboardButton(etiqueta_opcion(r), callback_data=f"{accion}:{r['media_type']}:{r['id']}")]
+        for r in resultados
+    ]
+    await update.message.reply_text("Encontré varias, elegí cuál:", reply_markup=InlineKeyboardMarkup(botones))
+
+async def elegir_opcion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    accion, tipo, id_str = query.data.split(":")
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)  # saca los botones para no tocar dos veces
+    except Exception:
+        pass
+    await ejecutar_accion(query.message, str(query.from_user.id), accion, tipo, int(id_str))
+
+async def ejecutar_accion(msg, u_id, accion, tipo, id_tmdb):
+    if accion == "ver":
+        await ver_serie(msg, id_tmdb)
+    elif accion == "seg":
+        await seguir_serie(msg, u_id, id_tmdb)
+    elif accion == "sin":
+        await sinopsis_titulo(msg, tipo, id_tmdb)
+
+# --- /ver ---
 async def ver(update, context):
     nombre = " ".join(context.args)
     if not nombre:
         await update.message.reply_text("Decime qué serie buscar.")
         return
-    serie = buscar_en_tmdb(nombre)
-    if not serie:
-        await update.message.reply_text("No encontré esa serie.")
-        return
+    await mostrar_opciones(update, "ver", nombre)
 
-    det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES")
+async def ver_serie(msg, serie_id):
+    det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie_id}?api_key={API_KEY_TMDB}&language=es-ES")
+    nombre = det.get('name', 'Sin nombre')
     hoy = hoy_local()
     prox_tmdb = det.get('next_episode_to_air')
     ult_tmdb = det.get('last_episode_to_air')
     num_temp = prox_tmdb['season_number'] if prox_tmdb else (ult_tmdb['season_number'] if ult_tmdb else None)
 
     if num_temp is not None:
-        temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES")
+        temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie_id}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES")
         episodes = temp_data.get('episodes', [])
         eps_pendientes = [ep for ep in episodes if ep.get('air_date') and ep['air_date'] >= hoy]
 
@@ -153,46 +199,48 @@ async def ver(update, context):
 
             if fecha_prox == hoy:
                 det_estreno = f"Nueva temporada {num_temp}" if len(caps_dia) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_dia]) + f", Temporada {num_temp}"
-                img_url = obtener_poster_temporada(serie['id'], num_temp, det.get('poster_path'))
-                msg = f"📺 {serie['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
-                if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
-                else: await update.message.reply_text(msg)
+                img_url = obtener_poster_temporada(serie_id, num_temp, det.get('poster_path'))
+                texto = f"📺 {nombre}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
+                if img_url: await msg.reply_photo(photo=img_url, caption=texto)
+                else: await msg.reply_text(texto)
             else:
-                msg = f"📺 {serie['name']}\n❌ Hoy no hay estrenos.\n\n📅 Próximos estrenos:\n🔢 Temporada {num_temp}\n"
+                texto = f"📺 {nombre}\n❌ Hoy no hay estrenos.\n\n📅 Próximos estrenos:\n🔢 Temporada {num_temp}\n"
                 for ep in (caps_dia + caps_sig)[:3]:
-                    msg += f"- Cap {ep['episode_number']}: {formatear_fecha(ep['air_date'])}\n"
-                await update.message.reply_text(msg)
+                    texto += f"- Cap {ep['episode_number']}: {formatear_fecha(ep['air_date'])}\n"
+                await msg.reply_text(texto)
         else:
-            await update.message.reply_text(f"📺 {serie['name']}\n❌ No hay fechas confirmadas.")
+            await msg.reply_text(f"📺 {nombre}\n❌ No hay fechas confirmadas.")
     else:
-        await update.message.reply_text(f"📺 {serie['name']}\n❌ No hay fechas confirmadas.")
+        await msg.reply_text(f"📺 {nombre}\n❌ No hay fechas confirmadas.")
 
+# --- /seguir ---
 async def seguir(update, context):
-    try:
-        nombre = " ".join(context.args)
-        if not nombre: return
-        serie = buscar_en_tmdb(nombre)
-        if serie:
-            u_id = str(update.effective_user.id)
-            user_data = coleccion.find_one({"user_id": u_id})
-            series_lista = user_data['series'] if user_data else []
-            if serie['id'] not in [s['id'] for s in series_lista]:
-                series_lista.append({'id': serie['id'], 'name': serie['name']})
-                coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
+    nombre = " ".join(context.args)
+    if not nombre:
+        await update.message.reply_text("Decime qué serie querés seguir.")
+        return
+    await mostrar_opciones(update, "seg", nombre)
 
-                det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES")
-                prox = det.get('next_episode_to_air') or det.get('last_episode_to_air')
-                num_t = prox['season_number'] if prox else 1
-                img_url = obtener_poster_temporada(serie['id'], num_t, det.get('poster_path'))
+async def seguir_serie(msg, u_id, serie_id):
+    det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie_id}?api_key={API_KEY_TMDB}&language=es-ES")
+    nombre = det.get('name', 'Sin nombre')
 
-                msg = f"📺 {serie['name']}\n✅ Añadido a tu lista."
-                if img_url: await update.message.reply_photo(photo=img_url, caption=msg)
-                else: await update.message.reply_text(msg)
-            else:
-                await update.message.reply_text(f"Esa serie ya está en tu lista.")
-    except Exception:
-        logger.exception("Error en /seguir")
-        await update.message.reply_text("Uy, hubo un error con la base de datos. Probá de nuevo en un toque.")
+    user_data = coleccion.find_one({"user_id": u_id})
+    series_lista = user_data['series'] if user_data else []
+    if serie_id in [s['id'] for s in series_lista]:
+        await msg.reply_text(f"📺 {nombre}\nEsa serie ya está en tu lista.")
+        return
+
+    series_lista.append({'id': serie_id, 'name': nombre})
+    coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
+
+    prox = det.get('next_episode_to_air') or det.get('last_episode_to_air')
+    num_t = prox['season_number'] if prox else 1
+    img_url = obtener_poster_temporada(serie_id, num_t, det.get('poster_path'))
+
+    texto = f"📺 {nombre}\n✅ Añadido a tu lista."
+    if img_url: await msg.reply_photo(photo=img_url, caption=texto)
+    else: await msg.reply_text(texto)
 
 async def borrar(update, context):
     nombre = " ".join(context.args)
@@ -266,26 +314,22 @@ async def sinopsis(update, context):
     if not nombre:
         await update.message.reply_text("Decime de qué serie o peli querés la sinopsis.")
         return
+    await mostrar_opciones(update, "sin", nombre, incluir_peliculas=True)
 
-    res = buscar_multi(nombre)
-    if not res:
-        await update.message.reply_text("No encontré nada con ese nombre.")
-        return
-
-    tipo = res['media_type']
-    det = tmdb_json(f"https://api.themoviedb.org/3/{tipo}/{res['id']}?api_key={API_KEY_TMDB}&language=es-ES")
+async def sinopsis_titulo(msg, tipo, id_tmdb):
+    det = tmdb_json(f"https://api.themoviedb.org/3/{tipo}/{id_tmdb}?api_key={API_KEY_TMDB}&language=es-ES")
 
     nombre_final = det.get('name') or det.get('title')
     resumen = det.get('overview') or "No hay sinopsis disponible en español por ahora."
     poster = det.get('poster_path')
     img_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
 
-    msg = f"📖 **{nombre_final}**\n\n{resumen}"
+    texto = f"📖 **{nombre_final}**\n\n{resumen}"
 
     if img_url:
-        await update.message.reply_photo(photo=img_url, caption=msg, parse_mode='Markdown')
+        await msg.reply_photo(photo=img_url, caption=texto, parse_mode='Markdown')
     else:
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await msg.reply_text(texto, parse_mode='Markdown')
 
 ADMIN_ID = os.environ.get('ADMIN_ID')
 
@@ -373,6 +417,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("sinopsis", sinopsis))
     app.add_handler(CommandHandler("difundir", difundir))
     app.add_handler(CommandHandler("usuarios", ver_usuarios))
+
+    app.add_handler(CallbackQueryHandler(elegir_opcion, pattern=r"^(ver|seg|sin):(tv|movie):\d+$"))
 
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))
 

@@ -2,7 +2,7 @@ import requests
 import os
 import threading
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, TypeHandler, filters, ContextTypes
@@ -55,6 +55,16 @@ def hoy_local():
     tz = pytz.timezone('Asia/Jerusalem')
     return datetime.now(tz).strftime("%Y-%m-%d")
 
+def manana_local():
+    tz = pytz.timezone('Asia/Jerusalem')
+    return (datetime.now(tz) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+def descripcion_estreno(caps, num_temp):
+    """Más de 3 capítulos el mismo día = se estrena la temporada completa."""
+    if len(caps) > 3:
+        return f"Nueva temporada {num_temp}"
+    return ", ".join([f"Cap {ep['episode_number']}" for ep in caps]) + f", Temporada {num_temp}"
+
 def obtener_poster_temporada(serie_id, num_temp, poster_default):
     try:
         url = f"https://api.themoviedb.org/3/tv/{serie_id}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES"
@@ -64,9 +74,10 @@ def obtener_poster_temporada(serie_id, num_temp, poster_default):
     except:
         return f"https://image.tmdb.org/t/p/w500{poster_default}" if poster_default else None
 
-# --- FUNCIÓN DE AVISO AUTOMÁTICO (12 AM) ---
+# --- FUNCIÓN DE AVISO AUTOMÁTICO (12 AM): estrenos de hoy y de mañana ---
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
+    manana = manana_local()
     try:
         usuarios = list(coleccion.find())
     except Exception:
@@ -80,17 +91,28 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
                 det = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES")
                 prox = det.get('next_episode_to_air')
 
-                if prox and prox['air_date'] == hoy:
-                    num_t = prox['season_number']
-                    temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES")
-                    caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
+                # Si el próximo episodio no es hoy ni mañana, no hay nada que avisar
+                if not prox or prox.get('air_date') not in (hoy, manana):
+                    continue
 
-                    det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
-                    img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
-                    msg = f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {det_estreno}"
+                num_t = prox['season_number']
+                temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES")
+                episodios = temp_data.get('episodes', [])
+                caps_hoy = [ep for ep in episodios if ep.get('air_date') == hoy]
+                caps_manana = [ep for ep in episodios if ep.get('air_date') == manana]
 
-                    if img_url: await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=msg)
-                    else: await context.bot.send_message(chat_id=u_id, text=msg)
+                avisos = []
+                if caps_hoy:
+                    avisos.append(f"📺 {s['name']}\n🔔 Hoy hay estrenos!\n🔢 {descripcion_estreno(caps_hoy, num_t)}")
+                if caps_manana:
+                    avisos.append(f"📺 {s['name']}\n⏰ Mañana hay estrenos!\n🔢 {descripcion_estreno(caps_manana, num_t)}")
+                if not avisos:
+                    continue
+
+                img_url = obtener_poster_temporada(s['id'], num_t, det.get('poster_path'))
+                for texto in avisos:
+                    if img_url: await context.bot.send_photo(chat_id=u_id, photo=img_url, caption=texto)
+                    else: await context.bot.send_message(chat_id=u_id, text=texto)
             except Exception:
                 logger.exception(f"Error revisando estrenos de {s.get('name')} para el usuario {u_id}")
 

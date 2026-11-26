@@ -14,6 +14,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURACIÓN (Segura mediante variables de entorno) ---
@@ -36,9 +37,21 @@ def keep_alive():
     port = int(os.environ.get("PORT", 8080))
     flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
+def tmdb_json(url):
+    """GET a TMDB con timeout, para que una respuesta colgada no congele el bot."""
+    return requests.get(url, timeout=10).json()
+
 def buscar_en_tmdb(nombre):
-    res = requests.get(f"https://api.themoviedb.org/3/search/tv?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES").json()
+    res = tmdb_json(f"https://api.themoviedb.org/3/search/tv?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES")
     return res['results'][0] if res.get('results') else None
+
+def buscar_multi(nombre):
+    """Busca series y películas; devuelve el primer resultado que sea tv o movie."""
+    res = tmdb_json(f"https://api.themoviedb.org/3/search/multi?api_key={API_KEY_TMDB}&query={nombre}&language=es-ES")
+    for r in res.get('results', []):
+        if r.get('media_type') in ('tv', 'movie'):
+            return r
+    return None
 
 def formatear_fecha(fecha_str):
     if not fecha_str: return "Sin fecha"
@@ -53,7 +66,7 @@ def hoy_local():
 def obtener_poster_temporada(serie_id, num_temp, poster_default):
     try:
         url = f"https://api.themoviedb.org/3/tv/{serie_id}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES"
-        res = requests.get(url).json()
+        res = tmdb_json(url)
         poster = res.get('poster_path') or poster_default
         return f"https://image.tmdb.org/t/p/w500{poster}" if poster else None
     except:
@@ -63,7 +76,7 @@ def obtener_poster_temporada(serie_id, num_temp, poster_default):
 async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
     hoy = hoy_local()
     try:
-        usuarios = coleccion.find()
+        usuarios = list(coleccion.find())
     except Exception:
         logger.exception("Error al conectar con Mongo en la tarea diaria")
         return
@@ -72,12 +85,12 @@ async def tarea_diaria(context: ContextTypes.DEFAULT_TYPE):
         u_id = user_data['user_id']
         for s in user_data.get('series', []):
             try:
-                det = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                det = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES")
                 prox = det.get('next_episode_to_air')
 
                 if prox and prox['air_date'] == hoy:
                     num_t = prox['season_number']
-                    temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                    temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES")
                     caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
 
                     det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
@@ -122,14 +135,14 @@ async def ver(update, context):
         await update.message.reply_text("No encontré esa serie.")
         return
 
-    det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+    det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES")
     hoy = hoy_local()
     prox_tmdb = det.get('next_episode_to_air')
     ult_tmdb = det.get('last_episode_to_air')
     num_temp = prox_tmdb['season_number'] if prox_tmdb else (ult_tmdb['season_number'] if ult_tmdb else None)
 
     if num_temp is not None:
-        temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES").json()
+        temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}/season/{num_temp}?api_key={API_KEY_TMDB}&language=es-ES")
         episodes = temp_data.get('episodes', [])
         eps_pendientes = [ep for ep in episodes if ep.get('air_date') and ep['air_date'] >= hoy]
 
@@ -167,7 +180,7 @@ async def seguir(update, context):
                 series_lista.append({'id': serie['id'], 'name': serie['name']})
                 coleccion.update_one({"user_id": u_id}, {"$set": {"series": series_lista}}, upsert=True)
 
-                det = requests.get(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+                det = tmdb_json(f"https://api.themoviedb.org/3/tv/{serie['id']}?api_key={API_KEY_TMDB}&language=es-ES")
                 prox = det.get('next_episode_to_air') or det.get('last_episode_to_air')
                 num_t = prox['season_number'] if prox else 1
                 img_url = obtener_poster_temporada(serie['id'], num_t, det.get('poster_path'))
@@ -215,12 +228,12 @@ async def revisar_estrenos(update, context):
     hoy = hoy_local()
     encontrado = False
     for s in user_data['series']:
-        det = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+        det = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}?api_key={API_KEY_TMDB}&language=es-ES")
         prox = det.get('next_episode_to_air')
         if prox and prox['air_date'] == hoy:
             encontrado = True
             num_t = prox['season_number']
-            temp_data = requests.get(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES").json()
+            temp_data = tmdb_json(f"https://api.themoviedb.org/3/tv/{s['id']}/season/{num_t}?api_key={API_KEY_TMDB}&language=es-ES")
             caps_hoy = [ep for ep in temp_data.get('episodes', []) if ep['air_date'] == hoy]
 
             det_estreno = f"Nueva temporada {num_t}" if len(caps_hoy) > 3 else ", ".join([f"Cap {ep['episode_number']}" for ep in caps_hoy]) + f", Temporada {num_t}"
@@ -254,13 +267,13 @@ async def sinopsis(update, context):
         await update.message.reply_text("Decime de qué serie o peli querés la sinopsis.")
         return
 
-    res = buscar_en_tmdb(nombre)
+    res = buscar_multi(nombre)
     if not res:
         await update.message.reply_text("No encontré nada con ese nombre.")
         return
 
-    tipo = res.get('media_type', 'tv')
-    det = requests.get(f"https://api.themoviedb.org/3/{tipo}/{res['id']}?api_key={API_KEY_TMDB}&language=es-ES").json()
+    tipo = res['media_type']
+    det = tmdb_json(f"https://api.themoviedb.org/3/{tipo}/{res['id']}?api_key={API_KEY_TMDB}&language=es-ES")
 
     nombre_final = det.get('name') or det.get('title')
     resumen = det.get('overview') or "No hay sinopsis disponible en español por ahora."

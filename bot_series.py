@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, time
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, TypeHandler, filters, ContextTypes
 from pymongo import MongoClient
 from flask import Flask
 
@@ -400,6 +400,16 @@ async def manejador_errores(update: object, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             logger.exception("No pude ni siquiera avisarle al usuario del error")
 
+# Deja una línea en los logs por cada mensaje o botón que le llega al bot.
+# Sirve para saber si Telegram está entregando los toques de botones.
+async def registrar_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        logger.info("Update recibido: botón tocado (%s)", update.callback_query.data)
+    elif update.message:
+        logger.info("Update recibido: mensaje")
+    else:
+        logger.info("Update recibido: otro tipo")
+
 if __name__ == '__main__':
     threading.Thread(target=keep_alive, daemon=True).start()
 
@@ -422,6 +432,8 @@ if __name__ == '__main__':
 
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, desconocido))
 
+    app.add_handler(TypeHandler(Update, registrar_update), group=-1)
+
     app.add_error_handler(manejador_errores)
 
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
